@@ -1,20 +1,93 @@
 #include "main.h"
+#include "lemlib/api.hpp" // IWYU pragma: keep
 
-/**
- * A callback function for LLEMU's center button.
- *
- * When this callback is fired, it will toggle line 2 of the LCD text between
- * "I was pressed!" and nothing.
- */
-void on_center_button() {
-	static bool pressed = false;
-	pressed = !pressed;
-	if (pressed) {
-		pros::lcd::set_text(2, "I was pressed!");
-	} else {
-		pros::lcd::clear_line(2);
-	}
-}
+
+/**************************/
+/***Chassis configuration**/
+/**************************/
+
+//Drivtrain
+pros::MotorGroup LeftSide ({1,2,3}, pros::MotorGearset::blue);
+pros::MotorGroup RightSide ({-4,-5,-6}, pros::MotorGearset::blue);
+
+//Sensors
+pros::Imu imu(7); //Inertial Sensor
+pros::Rotation HorizontalL(8);
+pros::Rotation Horizontal2(9);
+pros::Rotation Vertical(10);
+lemlib::TrackingWheel LeftSideTracker(&HorizontalL, lemlib::Omniwheel::NEW_275, 0/*(This is the distance from the center)*/);
+lemlib::TrackingWheel RightSideTracker(&Horizontal2, lemlib::Omniwheel::NEW_275, 0/*(This is the distance from the center)*/);
+lemlib::TrackingWheel VerticalTracker(&Vertical, lemlib::Omniwheel::NEW_275, 0/*(This is the distance from the center)*/);
+
+//******All required Lemlib classes******\\
+
+// drivetrain settings
+lemlib::Drivetrain drivetrain(
+	&LeftSide, // left motor group
+    &RightSide, // right motor group
+    10, // 10 inch track width
+    lemlib::Omniwheel::NEW_325, // using new 3.25" omnis
+    480, // drivetrain rpm is 480
+    2 // horizontal drift is 2 (for now)
+);
+// odometry settings
+lemlib::OdomSensors sensors(
+	&VerticalTracker, // vertical tracking wheel 1
+    nullptr, // vertical tracking wheel 2, we are only using 1
+    &LeftSideTracker, // horizontal tracking wheel 1
+    &RightSideTracker, // horizontal tracking wheel 2
+    &imu // inertial sensor
+);
+
+// lateral PID controller
+lemlib::ControllerSettings lateral_controller(
+	10, // proportional gain (kP)
+    0, // integral gain (kI)
+    3, // derivative gain (kD)
+    3, // anti windup
+    1, // small error range, in inches
+    100, // small error range timeout, in milliseconds
+    3, // large error range, in inches
+    500, // large error range timeout, in milliseconds
+    20 // maximum acceleration (slew)
+);
+
+// angular PID controller
+lemlib::ControllerSettings angular_controller(
+	2, // proportional gain (kP)
+    0, // integral gain (kI)
+    10, // derivative gain (kD)
+    3, // anti windup
+    1, // small error range, in degrees
+    100, // small error range timeout, in milliseconds
+    3, // large error range, in degrees
+    500, // large error range timeout, in milliseconds
+    0 // maximum acceleration (slew)
+);
+
+// input curve for throttle input during driver control
+lemlib::ExpoDriveCurve throttle_curve(
+	3, // joystick deadband out of 127
+    10, // minimum output where drivetrain will move out of 127
+    1.019 // expo curve gain
+);
+
+// input curve for steer input during driver control
+lemlib::ExpoDriveCurve steer_curve(
+	3, // joystick deadband out of 127
+    10, // minimum output where drivetrain will move out of 127
+    1.019 // expo curve gain
+);
+
+// create the chassis
+lemlib::Chassis chassis(
+	drivetrain, // drivetrain settings
+    lateral_controller, // lateral PID settings
+    angular_controller, // angular PID settings
+    sensors, // odometry sensors
+	&throttle_curve, 
+    &steer_curve
+);
 
 /**
  * Runs initialization code. This occurs as soon as the program is started.
@@ -24,9 +97,7 @@ void on_center_button() {
  */
 void initialize() {
 	pros::lcd::initialize();
-	pros::lcd::set_text(1, "Hello PROS User!");
-
-	pros::lcd::register_btn1_cb(on_center_button);
+	pros::lcd::set_text(1, "Sigma Panick Attack Code");
 }
 
 /**
@@ -73,21 +144,19 @@ void autonomous() {}
  * operator control task will be stopped. Re-enabling the robot will restart the
  * task, not resume it from where it left off.
  */
+pros::Controller controller(pros::E_CONTROLLER_MASTER);
+
 void opcontrol() {
-	pros::Controller master(pros::E_CONTROLLER_MASTER);
-	pros::Motor left_mtr(1);
-	pros::Motor right_mtr(2);
+    // loop forever
+    while (true) {
+        // get left y and right y positions
+        int leftY = controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y);
+        int rightY = controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_Y);
 
-	while (true) {
-		pros::lcd::print(0, "%d %d %d", (pros::lcd::read_buttons() & LCD_BTN_LEFT) >> 2,
-		                 (pros::lcd::read_buttons() & LCD_BTN_CENTER) >> 1,
-		                 (pros::lcd::read_buttons() & LCD_BTN_RIGHT) >> 0);
-		int left = master.get_analog(ANALOG_LEFT_Y);
-		int right = master.get_analog(ANALOG_RIGHT_Y);
+        // move the robot
+        chassis.tank(leftY, rightY);
 
-		left_mtr = left;
-		right_mtr = right;
-
-		pros::delay(20);
-	}
+        // delay to save resources
+        pros::delay(25);
+    }
 }
